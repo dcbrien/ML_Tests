@@ -24,13 +24,14 @@ def load_dataset(
     split: str,
     *,
     is_training: bool,
-    batch_size: int,) -> Iterator[Batch]:
+    batch_size: int,) -> (Iterator[Batch], Batch):
   """Loads the dataset as a generator of batches."""
-  ds = tfds.load("cifar10:3.*.*", split=split).cache().repeat()
+  ds, ds_info = tfds.load("cifar10:3.*.*", split=split, with_info=True)
+  ds = ds.cache().repeat()
   if is_training:
     ds = ds.shuffle(10 * batch_size, seed=0)
   ds = ds.batch(batch_size)
-  return iter(tfds.as_numpy(ds))
+  return iter(tfds.as_numpy(ds)), ds_info
 
 def net_fn(batch: Batch) -> jnp.ndarray:
   # normalize the images
@@ -52,35 +53,12 @@ def net_fn(batch: Batch) -> jnp.ndarray:
 
   return cnet(x)
 
-# Training loss (cross-entropy). - right from the examples. pretty simple function
-def loss(params: hk.Params, batch: Batch) -> jnp.ndarray:
-  """Compute the loss of the network, including L2."""
-  logits = net.apply(params, batch)
-  labels = jax.nn.one_hot(batch["label"], 10)
-
-  l2_loss = 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(params))
-  softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
-  softmax_xent /= labels.shape[0]
-
-  return softmax_xent + 1e-4 * l2_loss
 
 # Evaluation metric (classification accuracy).
 @jax.jit
 def accuracy(params: hk.Params, batch: Batch) -> jnp.ndarray:
   predictions = net.apply(params, batch)
   return jnp.mean(jnp.argmax(predictions, axis=-1) == batch["label"])
-
-@jax.jit
-def update(
-    params: hk.Params,
-    opt_state: optax.OptState,
-    batch: Batch,
-) -> Tuple[hk.Params, optax.OptState]:
-  """Learning rule (stochastic gradient descent)."""
-  grads = jax.grad(loss)(params, batch)
-  updates, opt_state = opt.update(grads, opt_state)
-  new_params = optax.apply_updates(params, updates)
-  return new_params, opt_state
 
 
 
